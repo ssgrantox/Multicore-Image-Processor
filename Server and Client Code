@@ -1,0 +1,117 @@
+import socket
+import threading
+import os
+
+SERVER_IP = '0.0.0.0'
+SERVER_PORT = 5000
+
+# Load all images from a folder
+def load_images(folder_path):
+    images = []
+    for filename in os.listdir(folder_path):
+        if filename.endswith(".jpg") or filename.endswith(".png"):
+            images.append(os.path.join(folder_path, filename))
+    return images
+
+def handle_client(conn, addr):
+    print(f"[+] Connected: {addr}")
+    images = load_images('./images/input')
+
+    for img_path in images:
+        with open(img_path, 'rb') as f:
+            img_data = f.read()
+        
+        # Send image size first
+        conn.sendall(len(img_data).to_bytes(8, 'big'))
+        # Then send actual image
+        conn.sendall(img_data)
+
+        # Receive processed image
+        processed_size = int.from_bytes(conn.recv(8), 'big')
+        processed_data = b''
+        while len(processed_data) < processed_size:
+            packet = conn.recv(4096)
+            if not packet:
+                break
+            processed_data += packet
+
+        output_path = os.path.join('./images/output', f'processed_{addr[1]}.jpg')
+        with open(output_path, 'wb') as f:
+            f.write(processed_data)
+
+    conn.close()
+
+def start_server():
+    server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    server.bind((SERVER_IP, SERVER_PORT))
+    server.listen()
+
+    print(f"[*] Server listening on {SERVER_IP}:{SERVER_PORT}")
+
+    while True:
+        conn, addr = server.accept()
+        thread = threading.Thread(target=handle_client, args=(conn, addr))
+        thread.start()
+
+if __name__ == "__main__":
+    start_server()
+
+
+
+
+
+
+
+
+
+
+
+import socket
+import multiprocessing
+from PIL import Image, ImageFilter
+import io
+
+SERVER_IP = 'your-server-ip-here'
+SERVER_PORT = 5000
+
+# Different "roles" for each client
+def process_image(data):
+    img = Image.open(io.BytesIO(data))
+    
+    # Choose one of these depending on device
+    img = img.convert('L')  # Grayscale
+    # img = img.filter(ImageFilter.GaussianBlur(radius=5))  # Blur
+    # img = img.filter(ImageFilter.FIND_EDGES)  # Edge detection
+
+    output = io.BytesIO()
+    img.save(output, format='JPEG')
+    return output.getvalue()
+
+def handle_server():
+    client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    client.connect((SERVER_IP, SERVER_PORT))
+
+    while True:
+        size_data = client.recv(8)
+        if not size_data:
+            break
+        img_size = int.from_bytes(size_data, 'big')
+
+        img_data = b''
+        while len(img_data) < img_size:
+            packet = client.recv(4096)
+            if not packet:
+                break
+            img_data += packet
+
+        with multiprocessing.Pool(1) as pool:
+            processed_img = pool.apply(process_image, (img_data,))
+
+        # Send processed image size first
+        client.sendall(len(processed_img).to_bytes(8, 'big'))
+        client.sendall(processed_img)
+
+    client.close()
+
+if __name__ == "__main__":
+    handle_server()
